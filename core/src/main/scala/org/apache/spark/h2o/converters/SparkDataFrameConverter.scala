@@ -18,31 +18,33 @@
 package org.apache.spark.h2o.converters
 
 import org.apache.spark._
-import org.apache.spark.h2o.H2OContextUtils.NodeDesc
-import org.apache.spark.h2o._
+import org.apache.spark.h2o.H2OContext
+import org.apache.spark.h2o.utils.{H2OSchemaUtils, NodeDesc}
+import org.apache.spark.rdd.H2OSchemaRDD
 import org.apache.spark.sql.types._
-import org.apache.spark.sql.{DataFrame, Row}
+import org.apache.spark.sql.{DataFrame, Row, SQLContext}
 import water.fvec.H2OFrame
 
 import scala.collection.immutable
 
-trait SparkDataFrameConverter extends Logging with ConvertersUtils {
+trait SparkDataFrameConverter extends Logging with ConverterUtils {
+
+  /** Transform H2O Frame into Spark's DataFrame */
+  def toDataFrame(fr: H2OFrame)(implicit sqlContext: SQLContext): DataFrame = {
+    val h2oSchemaRDD = new H2OSchemaRDD(sqlContext.sparkContext, fr)
+    import org.apache.spark.sql.H2OSQLContextUtils.internalCreateDataFrame
+    internalCreateDataFrame(h2oSchemaRDD, H2OSchemaUtils.createSchema(fr))(sqlContext)
+  }
 
   /** Transform Spark's DataFrame into H2O Frame */
-  def toH2OFrame(sc: SparkContext, dataFrame: DataFrame, frameKeyName: Option[String]) : H2OFrame = {
-    import org.apache.spark.h2o.H2OSchemaUtils._
+  def toH2OFrame(hc: H2OContext, dataFrame: DataFrame, frameKeyName: Option[String]) : H2OFrame = {
+    import H2OSchemaUtils._
     // Cache DataFrame RDD's
     val dfRdd = dataFrame.rdd
     val keyName = frameKeyName.getOrElse("frame_rdd_" + dfRdd.id)
 
-    val fr = getFrameOrNone(keyName)
-    if(fr.isDefined){
-      // return early if this frame already exist
-      return fr.get
-    }
-
     // Flattens and expands RDD's schema
-    val flatRddSchema = expandedSchema(sc, dataFrame)
+    val flatRddSchema = expandedSchema(hc.sparkContext, dataFrame)
     // Patch the flat schema based on information about types
     val fnames = flatRddSchema.map(t => t._2.name).toArray
     // Transform datatype into h2o types
@@ -52,9 +54,8 @@ trait SparkDataFrameConverter extends Logging with ConvertersUtils {
         dataTypeToVecType(f._2.dataType)
       }).toArray
 
-    convert[Row](sc, dfRdd, keyName, fnames, vecTypes, perSQLPartition(flatRddSchema))
+    convert[Row](hc, dfRdd, keyName, fnames, vecTypes, perSQLPartition(flatRddSchema))
   }
-
 
   /**
     *
@@ -68,11 +69,11 @@ trait SparkDataFrameConverter extends Logging with ConvertersUtils {
     */
   private[this]
   def perSQLPartition (types: Seq[(Seq[Int], StructField, Byte)])
-                      (keyName: String, vecTypes: Array[Byte], uploadPlan: immutable.Map[Int, NodeDesc])
-                      (context: TaskContext, it: Iterator[Row] ): (Int,Long) = {
-    val conn = new DataUploadHelper.ConnectionHolder(uploadPlan(context.partitionId()))
+                      (keyName: String, vecTypes: Array[Byte], uploadPlan: Option[immutable.Map[Int, NodeDesc]])
+                      (context: TaskContext, it: Iterator[Row] ): (Int, Long) = {
+    val con = ConverterUtils.getConverterContext(uploadPlan, context.partitionId())
     // Creates array of H2O NewChunks; A place to record all the data in this partition
-    conn.createChunksRemotely(keyName, vecTypes, context.partitionId())
+    con.createChunks(keyName, vecTypes, context.partitionId())
 
 
     it.foreach(row => {
@@ -97,25 +98,25 @@ trait SparkDataFrameConverter extends Logging with ConvertersUtils {
         }
         val aidx = path(i) // actual index into row provided by path
         if (subRow.isNullAt(aidx)) {
-          conn.putNA(idx)
+          con.putNA(idx)
         } else {
           val ary = if (isAry) subRow.getAs[Seq[_]](aidx) else null
           val aryLen = if (isAry) ary.length else -1
           val aryIdx = idx - startOfSeq // shared index to position in array/vector
           val vec = if (isVec) subRow.getAs[mllib.linalg.Vector](aidx) else null
-          if (isAry && aryIdx >= aryLen)  conn.putNA(idx)
-          else if (isVec && aryIdx >= vec.size) conn.put(idx, 0.0) // Add zeros for vectors
+          if (isAry && aryIdx >= aryLen)  con.putNA(idx)
+          else if (isVec && aryIdx >= vec.size) con.put(idx, 0.0) // Add zeros for vectors
           else dataType match {
-            case BooleanType =>  conn.put(idx, if (isAry)
+            case BooleanType =>  con.put(idx, if (isAry)
               if (ary(aryIdx).asInstanceOf[Boolean]) 1 else 0
             else if (subRow.getBoolean(aidx)) 1 else 0)
             case BinaryType =>
-            case ByteType =>  conn.put(idx, if (isAry) ary(aryIdx).asInstanceOf[Byte] else subRow.getByte(aidx))
-            case ShortType =>  conn.put(idx, if (isAry) ary(aryIdx).asInstanceOf[Short] else subRow.getShort(aidx))
-            case IntegerType =>  conn.put(idx, if (isAry) ary(aryIdx).asInstanceOf[Int] else subRow.getInt(aidx))
-            case LongType =>  conn.put(idx, if (isAry) ary(aryIdx).asInstanceOf[Long] else subRow.getLong(aidx))
-            case FloatType =>  conn.put(idx, if (isAry) ary(aryIdx).asInstanceOf[Float] else subRow.getFloat(aidx))
-            case DoubleType =>  conn.put(idx, if (isAry) {
+            case ByteType =>  con.put(idx, if (isAry) ary(aryIdx).asInstanceOf[Byte] else subRow.getByte(aidx))
+            case ShortType =>  con.put(idx, if (isAry) ary(aryIdx).asInstanceOf[Short] else subRow.getShort(aidx))
+            case IntegerType =>  con.put(idx, if (isAry) ary(aryIdx).asInstanceOf[Int] else subRow.getInt(aidx))
+            case LongType =>  con.put(idx, if (isAry) ary(aryIdx).asInstanceOf[Long] else subRow.getLong(aidx))
+            case FloatType =>  con.put(idx, if (isAry) ary(aryIdx).asInstanceOf[Float] else subRow.getFloat(aidx))
+            case DoubleType =>  con.put(idx, if (isAry) {
               ary(aryIdx).asInstanceOf[Double]
             } else {
               if (isVec) {
@@ -127,23 +128,22 @@ trait SparkDataFrameConverter extends Logging with ConvertersUtils {
             case StringType => {
               val sv = if (isAry) ary(aryIdx).asInstanceOf[String] else subRow.getString(aidx)
               // Always produce string vectors
-              conn.put(idx, sv)
+              con.put(idx, sv)
             }
-            case TimestampType =>  conn.put(idx, row.getAs[java.sql.Timestamp](aidx))
-            case _ =>  conn.putNA(idx)
+            case TimestampType =>  con.put(idx, row.getAs[java.sql.Timestamp](aidx))
+            case _ =>  con.putNA(idx)
           }
         }
 
       }
-      conn.increaseRowCounter()
+      con.increaseRowCounter()
     })
 
     //Compress & write data in partitions to H2O Chunks
-    conn.closeChunksRemotely()
-    conn.close()
+    con.closeChunks()
 
     // Return Partition number and number of rows in this partition
-    (context.partitionId, conn.numOfRows)
+    (context.partitionId, con.numOfRows)
   }
 
 }

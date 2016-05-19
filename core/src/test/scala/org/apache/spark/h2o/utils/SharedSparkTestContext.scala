@@ -14,28 +14,43 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */
-package org.apache.spark.h2o.util
+package org.apache.spark.h2o.utils
 
 import org.apache.spark.SparkContext
-import org.apache.spark.h2o.H2OContext
+import org.apache.spark.h2o.backends.SharedH2OConf._
+import org.apache.spark.h2o.{H2OConf, H2OContext}
+import org.apache.spark.sql.SQLContext
 import org.scalatest.Suite
-
-/** This fixture create a Spark context once and share it over whole run of test suite.
+/**
+  * Helper trait to simplify initialization and termination of Spark/H2O contexts.
   *
-  * FIXME: this cannot be used yet, since H2OContext cannot be recreated in JVM. */
-trait PerTestSparkTestContext extends SparkTestContext { self: Suite =>
+  */
+trait SharedSparkTestContext extends SparkTestContext with ExternalClusterModeTestUtils { self: Suite =>
+
 
   def createSparkContext:SparkContext
-  def createH2OContext(sc:SparkContext):H2OContext = H2OContext.getOrCreate(sc)
 
-  override protected def beforeEach(): Unit = {
-    super.beforeEach()
+  def createH2OContext(sc: SparkContext, conf: H2OConf): H2OContext = {
+    H2OContext.getOrCreate(sc, conf)
+  }
+
+  override def beforeAll() {
+    super.beforeAll()
     sc = createSparkContext
-    hc = createH2OContext(sc)
+    sqlc = SQLContext.getOrCreate(sc)
+    if(testsInExternalMode){
+      startCloud(2, sc.getConf)
+    }
+    hc = createH2OContext(sc, new H2OConf(sc))
   }
 
-  override protected def afterEach(): Unit = {
+  override def afterAll(){
+    if(testsInExternalMode){
+      stopCloud()
+    }
     resetContext()
-    super.afterEach()
+    super.afterAll()
+
   }
+
 }

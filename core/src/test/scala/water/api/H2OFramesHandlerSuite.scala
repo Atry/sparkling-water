@@ -19,9 +19,7 @@ package water.api
 import java.io.File
 
 import org.apache.spark.SparkContext
-import org.apache.spark.h2o._
-import org.apache.spark.h2o.util.{SharedSparkTestContext, SparkTestContext}
-import org.apache.spark.sql.SQLContext
+import org.apache.spark.h2o.utils.SharedSparkTestContext
 import org.junit.runner.RunWith
 import org.scalatest.FunSuite
 import org.scalatest.junit.JUnitRunner

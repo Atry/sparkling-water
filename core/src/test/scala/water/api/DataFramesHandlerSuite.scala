@@ -20,7 +20,7 @@ import java.io.File
 
 import com.google.gson.JsonParser
 import org.apache.spark.SparkContext
-import org.apache.spark.h2o.util.SharedSparkTestContext
+import org.apache.spark.h2o.utils.SharedSparkTestContext
 import org.apache.spark.sql.types.{DataType, Metadata, StructField, StructType}
 import org.junit.runner.RunWith
 import org.scalatest.FunSuite
@@ -46,7 +46,7 @@ class DataFramesHandlerSuite extends FunSuite with SharedSparkTestContext {
     val df = rdd.toDF("nums")
 
     df.registerTempTable(rid)
-    val dataFramesHandler = new DataFramesHandler(sc,hc)
+    val dataFramesHandler = new DataFramesHandler(sc, hc)
 
     val req = new DataFramesV3
     val result = dataFramesHandler.list(3, req)

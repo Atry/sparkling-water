@@ -21,8 +21,8 @@ import java.sql.Timestamp
 import java.util.UUID
 
 import hex.splitframe.ShuffleSplitFrame
-import org.apache.spark.h2o.H2OSchemaUtils.flatSchema
-import org.apache.spark.h2o.util.SharedSparkTestContext
+import org.apache.spark.h2o.utils.{SharedSparkTestContext, H2OSchemaUtils}
+import H2OSchemaUtils.flatSchema
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{DataFrame, Row}

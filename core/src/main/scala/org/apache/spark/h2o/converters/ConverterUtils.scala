@@ -17,15 +17,17 @@
 
 package org.apache.spark.h2o.converters
 
-import org.apache.spark.h2o.H2OContextUtils.NodeDesc
+import org.apache.spark.TaskContext
 import org.apache.spark.h2o._
-import org.apache.spark.{SparkContext, TaskContext}
+import org.apache.spark.h2o.backends.external.ExternalConverter
+import org.apache.spark.h2o.backends.internal.InternalConverterContext
+import org.apache.spark.h2o.utils.NodeDesc
 import water.{DKV, Key}
 
 import scala.collection.immutable
 
 
-private[converters] trait ConvertersUtils {
+private[converters] trait ConverterUtils {
 
 
   def initFrame[T](keyName: String, names: Array[String]):Unit = {
@@ -46,7 +48,7 @@ private[converters] trait ConvertersUtils {
   }
 
   /**
-    * Gets frame for specified key or none of that frame does not exist
+    * Gets frame for specified key or none if that frame does not exist
  *
     * @param keyName key of the requested frame
     * @return option containing frame or none
@@ -61,10 +63,11 @@ private[converters] trait ConvertersUtils {
       None
     }
   }
+
   /**
     * Converts the RDD to H2O Frame using specified conversion function
- *
-    * @param sc spark context
+    *
+    * @param hc H2O context
     * @param rdd rdd to convert
     * @param keyName key of the resulting frame
     * @param colNames names of the columns in the H2O Frame
@@ -74,16 +77,35 @@ private[converters] trait ConvertersUtils {
     * @tparam T type of RDD to convert
     * @return pair (partition ID, number of rows in that partition)
     */
-  def convert[T](sc: SparkContext, rdd : RDD[T], keyName: String, colNames: Array[String], vecTypes: Array[Byte],
-                 func: ( (String, Array[Byte], immutable.Map[Int, NodeDesc]) => (TaskContext, Iterator[T]) => (Int, Long))) = {
+  def convert[T](hc: H2OContext, rdd : RDD[T], keyName: String, colNames: Array[String], vecTypes: Array[Byte],
+                 func: ( (String, Array[Byte], Option[immutable.Map[Int, NodeDesc]]) => (TaskContext, Iterator[T]) => (Int, Long))) = {
     // Make an H2O data Frame - but with no backing data (yet)
     initFrame(keyName, colNames)
-    val (uploadPlan, preparedRDD) = DataUploadHelper.scheduleUpload[T](rdd)
-    val rows = sc.runJob(preparedRDD, func(keyName, vecTypes, uploadPlan)) // eager, not lazy, evaluation
+
+    // prepare rdd and required metadata based on the used backend
+    val (preparedRDD, uploadPlan) = if(hc.getConf.runsInExternalClusterMode){
+       val res = ExternalConverter.scheduleUpload[T](rdd)
+      (res._1, Some(res._2))
+    }else{
+      (rdd, None)
+    }
+
+    val rows = hc.sparkContext.runJob(preparedRDD, func(keyName, vecTypes, uploadPlan)) // eager, not lazy, evaluation
     val res = new Array[Long](preparedRDD.partitions.length)
     rows.foreach { case (cidx,  nrows) => res(cidx) = nrows }
-
     // Add Vec headers per-Chunk, and finalize the H2O Frame
     new H2OFrame(finalizeFrame(keyName, res, vecTypes))
+  }
+}
+
+object ConverterUtils{
+
+  def getConverterContext(uploadPlan: Option[immutable.Map[Int, NodeDesc]], partitionId: Int): ConvertorContext ={
+    val converter = if(uploadPlan.isDefined){
+      new ExternalConverter(uploadPlan.get.get(partitionId).get)
+    }else{
+      new InternalConverterContext()
+    }
+    converter
   }
 }

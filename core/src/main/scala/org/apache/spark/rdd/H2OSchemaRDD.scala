@@ -21,25 +21,26 @@ import java.util.UUID
 
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.h2o.H2OContext
-import org.apache.spark.h2o.H2OSchemaUtils.vecTypeToDataType
+import org.apache.spark.h2o.utils.H2OSchemaUtils
+import H2OSchemaUtils.vecTypeToDataType
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.GenericMutableRow
 import org.apache.spark.sql.types._
-import org.apache.spark.{Partition, TaskContext}
+import org.apache.spark.{SparkContext, Partition, TaskContext}
 import water.fvec.H2OFrame
 import water.parser.BufferedString
 
 /**
  * H2O H2OFrame wrapper providing RDD[Row] API.
  *
- * @param h2oContext
- * @param frame
+ * @param sc Spark Context
+ * @param frame frame which will be wrapped as RDD
  */
 private[spark]
-class H2OSchemaRDD(@transient val h2oContext: H2OContext,
+class H2OSchemaRDD(@transient val sc: SparkContext,
                    @transient val frame: H2OFrame)
-  extends RDD[InternalRow](h2oContext.sparkContext, Nil) with H2ORDDLike {
+  extends RDD[InternalRow](sc, Nil) with H2ORDDLike {
 
   @DeveloperApi
   override def compute(split: Partition, context: TaskContext): Iterator[InternalRow] = {

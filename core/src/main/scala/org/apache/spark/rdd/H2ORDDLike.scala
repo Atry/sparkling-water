@@ -25,8 +25,6 @@ import water.fvec.{Chunk, Frame}
  * Contains functions that are shared between all H2ORDD types (i.e., Scala, Java)
  */
 private[rdd] trait H2ORDDLike {
-  /** Context for this RDD */
-  @transient val h2oContext : H2OContext
   /** Underlying DataFrame */
   @transient val frame: H2OFrame
 

@@ -14,43 +14,37 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */
-package org.apache.spark.h2o.util
-
-import java.net.InetAddress
+package org.apache.spark.h2o.utils
 
 import org.apache.spark.SparkContext
+import org.apache.spark.h2o.backends.SharedH2OConf._
 import org.apache.spark.h2o.{H2OConf, H2OContext}
 import org.apache.spark.sql.SQLContext
 import org.scalatest.Suite
 
-/** This fixture create a Spark context once and share it over whole run of test suite. */
-trait SharedSparkTestContext extends SparkTestContext with H2OForker { self: Suite =>
+/** This fixture create a Spark context once and share it over whole run of test suite.
+  *
+  * FIXME: this cannot be used yet, since H2OContext cannot be recreated in JVM. */
+trait PerTestSparkTestContext extends SparkTestContext { self: Suite =>
 
   def createSparkContext:SparkContext
+  def createH2OContext(sc: SparkContext, conf: H2OConf):H2OContext = H2OContext.getOrCreate(sc)
 
-  def launchH2OCluster(sc: SparkContext): H2OConf ={
-    val cloudName = uniqueCloudName("test")
-    val clientIP = InetAddress.getLocalHost.getHostAddress
-    cloudProcesses = launchCloud(2, cloudName, clientIP)
-    new H2OConf(sc.getConf).setCloudName(cloudName).setClientIP(clientIP)
-  }
-
-  def createH2OContext(sc: SparkContext, conf: H2OConf ):H2OContext = {
-    new H2OContext(sc, conf)
-  }
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
+  override protected def beforeEach(): Unit = {
+    super.beforeEach()
     sc = createSparkContext
-    val conf = launchH2OCluster(sc)
     sqlc = SQLContext.getOrCreate(sc)
-    hc = createH2OContext(sc, conf)
+    if(testsInExternalMode){
+      startCloud(2, sc.getConf)
+    }
+    hc = createH2OContext(sc, new H2OConf(sc))
   }
 
-  override protected def afterAll(): Unit = {
-    stopCloud(cloudProcesses)
-    cloudProcesses = null
+  override protected def afterEach(): Unit = {
+    if(testsInExternalMode){
+      stopCloud()
+    }
     resetContext()
-    super.afterAll()
+    super.afterEach()
   }
 }
